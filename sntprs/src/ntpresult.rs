@@ -1,4 +1,8 @@
 
+use std::fmt::Debug;
+use std::fmt::Formatter;
+use crate::NSEC_IN_SEC;
+
 /// SNTP request result representation
 pub struct NtpResult {
     /// NTP server seconds value

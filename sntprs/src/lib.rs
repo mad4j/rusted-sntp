@@ -18,11 +18,17 @@
 //! }
 //! ```
 
+
+#[macro_use]
+extern crate arrayref;
+
+
 mod ntppacket;
 mod ntpresult;
 
 pub mod utils;
 
+use crate::ntppacket::RawPacket;
 use crate::ntpresult::NtpResult;
 use log::debug;
 use std::io;
@@ -65,72 +71,6 @@ impl NtpNum for u64 {
     }
 }
 
-struct RawNtpPacket([u8; mem::size_of::<NtpPacket>()]);
-
-impl Default for RawNtpPacket {
-    fn default() -> Self {
-        RawNtpPacket([0u8; mem::size_of::<NtpPacket>()])
-    }
-}
-
-impl From<RawNtpPacket> for NtpPacket {
-    fn from(val: RawNtpPacket) -> Self {
-        // left it here for a while, maybe in future Rust releases there
-        // will be a way to use such a generic function with compile-time
-        // size determination
-        // const fn to_array<T: Sized>(x: &[u8]) -> [u8; mem::size_of::<T>()] {
-        //     let mut temp_buf = [0u8; mem::size_of::<T>()];
-        //
-        //     temp_buf.copy_from_slice(x);
-        //     temp_buf
-        // }
-        let to_array_u32 = |x: &[u8]| {
-            let mut temp_buf = [0u8; mem::size_of::<u32>()];
-            temp_buf.copy_from_slice(x);
-            temp_buf
-        };
-        let to_array_u64 = |x: &[u8]| {
-            let mut temp_buf = [0u8; mem::size_of::<u64>()];
-            temp_buf.copy_from_slice(x);
-            temp_buf
-        };
-
-        NtpPacket {
-            li_vn_mode: val.0[0],
-            stratum: val.0[1],
-            poll: val.0[2] as i8,
-            precision: val.0[3] as i8,
-            root_delay: u32::from_le_bytes(to_array_u32(&val.0[4..8])),
-            root_dispersion: u32::from_le_bytes(to_array_u32(&val.0[8..12])),
-            ref_id: u32::from_le_bytes(to_array_u32(&val.0[12..16])),
-            ref_timestamp: u64::from_le_bytes(to_array_u64(&val.0[16..24])),
-            origin_timestamp: u64::from_le_bytes(to_array_u64(&val.0[24..32])),
-            recv_timestamp: u64::from_le_bytes(to_array_u64(&val.0[32..40])),
-            tx_timestamp: u64::from_le_bytes(to_array_u64(&val.0[40..48])),
-        }
-    }
-}
-
-impl From<&NtpPacket> for RawNtpPacket {
-    fn from(val: &NtpPacket) -> Self {
-        let mut tmp_buf = [0u8; mem::size_of::<NtpPacket>()];
-
-        tmp_buf[0] = val.li_vn_mode;
-        tmp_buf[1] = val.stratum;
-        tmp_buf[2] = val.poll as u8;
-        tmp_buf[3] = val.precision as u8;
-        tmp_buf[4..8].copy_from_slice(&val.root_delay.to_be_bytes());
-        tmp_buf[8..12].copy_from_slice(&val.root_dispersion.to_be_bytes());
-        tmp_buf[12..16].copy_from_slice(&val.ref_id.to_be_bytes());
-        tmp_buf[16..24].copy_from_slice(&val.ref_timestamp.to_be_bytes());
-        tmp_buf[24..32].copy_from_slice(&val.origin_timestamp.to_be_bytes());
-        tmp_buf[32..40].copy_from_slice(&val.recv_timestamp.to_be_bytes());
-        tmp_buf[40..48].copy_from_slice(&val.tx_timestamp.to_be_bytes());
-
-        RawNtpPacket(tmp_buf)
-    }
-}
-
 /// Send request to a NTP server with the given address
 /// and process the response
 ///
@@ -159,8 +99,8 @@ pub fn request(pool: &str, port: u32) -> io::Result<NtpResult> {
         .expect("Unable to set up socket timeout");
     let req = NtpPacket::new();
     let dest = process_request(dest, &req, &socket)?;
-    let mut buf: RawNtpPacket = RawNtpPacket::default();
-    let (response, src) = socket.recv_from(buf.0.as_mut())?;
+    let mut buf: RawPacket = [0u8; 48];
+    let (response, src) = socket.recv_from(buf.as_mut())?;
     let recv_timestamp = get_ntp_timestamp();
     debug!("Response: {}", response);
 
@@ -217,14 +157,14 @@ fn send_request(
     socket: &net::UdpSocket,
     dest: net::SocketAddr,
 ) -> io::Result<usize> {
-    let buf: RawNtpPacket = req.into();
+    let buf: RawPacket = req.into();
 
-    socket.send_to(&buf.0, dest)
+    socket.send_to(&buf, dest)
 }
 
 fn process_response(
     req: &NtpPacket,
-    resp: RawNtpPacket,
+    resp: RawPacket,
     recv_timestamp: u64,
 ) -> Result<NtpResult, &str> {
     const SNTP_UNICAST: u8 = 4;
